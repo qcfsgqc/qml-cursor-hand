@@ -61,7 +61,7 @@ CursorHand.restoreOverride()
 
 ## Prebuilt modules (GitHub Actions)
 
-Workflow [Build module](.github/workflows/build-module.yml) compiles a drop-in import for:
+Every successful build on `main` (and manual **Run workflow**) publishes zips to the **[Latest release](https://github.com/qcfsgqc/qml-cursor-hand/releases/latest)**. Pushing a version tag creates a named release instead.
 
 | Artifact | Runner |
 |---|---|
@@ -70,12 +70,6 @@ Workflow [Build module](.github/workflows/build-module.yml) compiles a drop-in i
 | `cursor-hand-windows-x64.zip` | Windows 2022 (MSVC) |
 | `cursor-hand-macos-arm64.zip` | macOS 14 |
 | `cursor-hand-macos-x64.zip` | macOS 13 |
-
-How to get a zip:
-
-1. Open **Actions → Build module** (or run **workflow_dispatch**).
-2. Open a green run → **Artifacts**.
-3. Or push a tag / GitHub Release — zips are attached automatically.
 
 Each zip contains `qml/Cursor/Hand/` (plugin + backing lib + `qmldir`). Point the engine at the `qml` folder:
 

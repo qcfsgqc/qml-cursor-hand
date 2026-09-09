@@ -4,8 +4,6 @@ on:
   push:
   pull_request:
   workflow_dispatch:
-  release:
-    types: [published]
 
 concurrency:
   group: build-module-${{ github.workflow }}-${{ github.ref }}
@@ -84,9 +82,9 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Attach to GitHub Release
+    name: Publish GitHub Release
     needs: build
-    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -100,5 +98,15 @@ jobs:
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+          name: ${{ github.ref_type == 'tag' && format('Cursor.Hand {0}', github.ref_name) || 'Latest' }}
+          target_commitish: ${{ github.sha }}
           files: artifacts/*.zip
           fail_on_unmatched_files: true
+          generate_release_notes: true
+          make_latest: true
+          prerelease: ${{ github.ref_type != 'tag' }}
+          body: |
+            Qt 6.10 Cursor.Hand modules from `${{ github.sha }}`.
+
+            Extract a zip and add `qml` to `QML_IMPORT_PATH`, then `import Cursor.Hand`.
