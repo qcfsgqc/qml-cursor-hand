@@ -1,6 +1,7 @@
 #include "cursorhand.h"
 
 #include <QGuiApplication>
+#include <QMetaObject>
 #include <QPixmap>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -9,16 +10,43 @@
 #include <QQuickWindow>
 #include <QWindow>
 
+static QPixmap pixmapFromUrl(const QUrl &url)
+{
+    auto loadPath = [](const QString &path) {
+        QPixmap px;
+        if (!path.isEmpty())
+            px.load(path);
+        return px;
+    };
+
+    QPixmap px;
+    if (url.scheme() == QLatin1String("qrc"))
+        px = loadPath(QLatin1Char(':') + url.path());
+    if (px.isNull() && url.isLocalFile())
+        px = loadPath(url.toLocalFile());
+    if (px.isNull() && (url.scheme().isEmpty() || url.scheme() == QLatin1String("file")))
+        px = loadPath(url.path());
+#if defined(Q_OS_WASM)
+    // Emscripten FS / qrc fallbacks: no real local files in the browser.
+    if (px.isNull() && !url.path().isEmpty()) {
+        px = loadPath(url.path());
+        if (px.isNull() && !url.path().startsWith(QLatin1Char(':')))
+            px = loadPath(QLatin1Char(':') + url.path());
+    }
+#endif
+    return px;
+}
+
 CursorHandAttached::CursorHandAttached(QObject *parent)
     : QObject(parent)
 {
     if (auto *item = qobject_cast<QQuickItem *>(parent)) {
-        QObject::connect(item, &QQuickItem::windowChanged, this, [this](QQuickWindow *window) {
-            if (window)
-                apply();
-        });
+        connect(item, &QQuickItem::windowChanged, this, [this](QQuickWindow *) { apply(); });
+        connect(item, &QQuickItem::parentChanged, this, [this](QQuickItem *) { apply(); });
     }
     apply();
+    // Engine/window are often not ready during construction (especially on WASM).
+    QMetaObject::invokeMethod(this, [this] { apply(); }, Qt::QueuedConnection);
 }
 
 CursorHandAttached::~CursorHandAttached()
@@ -73,7 +101,7 @@ void CursorHandAttached::ensureHandler()
                           "HoverHandler {\n"
                           "    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad\n"
                           "}\n"),
-                      QUrl(QStringLiteral("qrc:/Cursor/Hand/internal/Hover.qml")));
+                      QUrl(QStringLiteral("qrc:/qt/qml/Cursor/Hand/internal/Hover.qml")));
 
     m_handler = component.create(qmlContext(item));
     if (!m_handler) {
@@ -145,13 +173,7 @@ void CursorHand::setOverride(Qt::CursorShape shape)
 
 void CursorHand::setPixmapOverride(const QUrl &url, int hotX, int hotY)
 {
-    QString path;
-    if (url.scheme() == QLatin1String("qrc"))
-        path = QLatin1Char(':') + url.path();
-    else
-        path = url.toLocalFile();
-
-    const QPixmap pixmap(path);
+    const QPixmap pixmap = pixmapFromUrl(url);
     if (pixmap.isNull()) {
         qWarning("CursorHand: cannot load cursor pixmap from %s", qPrintable(url.toString()));
         return;

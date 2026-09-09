@@ -1,4 +1,6 @@
-find_package(Qt6 6.10 REQUIRED COMPONENTS Quick QuickControls2)
+if(NOT TARGET Qt6::QuickControls2)
+    find_package(Qt6 6.10 REQUIRED COMPONENTS Quick QuickControls2)
+endif()
 
 qt_add_executable(cursorhand-example
     main.cpp
@@ -19,3 +21,7 @@ target_link_libraries(cursorhand-example
         Qt6::QuickControls2
         cursorhand
 )
+
+if(EMSCRIPTEN)
+    qt_import_qml_plugins(cursorhand-example)
+endif()

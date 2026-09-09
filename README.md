@@ -2,25 +2,68 @@
 
 Minimal Qt **6.10+** QML module that turns the mouse cursor into a hand (or any `Qt::CursorShape`) on **any** `Item` / Control — without stealing clicks.
 
-URI: `Cursor.Hand`
+Works on desktop **and Qt for WebAssembly** (static link). URI: `Cursor.Hand`.
 
 ## Why this works on every QML component
-
-Two complementary APIs, both non-invasive:
 
 | API | Use on | Clicks stolen? |
 |---|---|---|
 | **Attached** `CursorHand` | Any `Item`, Control, `Window` | No |
 | **Child** `HandCursor` | Drop inside any component | No (`HoverHandler`) |
 
-Attached mode:
+Attached mode calls `QQuickItem::setCursor()` and installs a `HoverHandler` on the same item. `HoverHandler` does not grab the pointer, so `Button`, `MouseArea`, `TapHandler`, `Flickable`, etc. keep working.
 
-1. Calls `QQuickItem::setCursor()` (window walks parents, so it still applies when children fill the item).
-2. Installs a `HoverHandler` on the same item so Qt Quick Controls / nested mouse areas still show the hand.
+On WASM, Qt maps `Qt::PointingHandCursor` to CSS `cursor: pointer` (and the other shapes to `grab` / `wait` / …).
 
-`HoverHandler` does not grab the pointer, so `Button`, `MouseArea`, `TapHandler`, `Flickable`, etc. keep working.
+## Use as a git submodule
 
-## Usage
+```bash
+git submodule add https://github.com/qcfsgqc/qml-cursor-hand.git third_party/qml-cursor-hand
+git submodule update --init --recursive
+```
+
+Parent `CMakeLists.txt` (desktop **and** WASM — use the kit's `qt-cmake` for WASM):
+
+```cmake
+add_subdirectory(third_party/qml-cursor-hand)
+
+qt_add_executable(myapp main.cpp)
+
+qt_add_qml_module(myapp
+    URI MyApp
+    VERSION 1.0
+    QML_FILES Main.qml
+    DEPENDENCIES
+        QtQuick
+        Cursor.Hand
+)
+
+target_link_libraries(myapp PRIVATE Qt6::Quick)
+
+# links cursorhand; on WASM/static Qt also runs qt_import_qml_plugins()
+cursorhand_link(myapp)
+```
+
+```qml
+import Cursor.Hand
+
+Button {
+    text: "Click"
+    CursorHand.enabled: true
+}
+```
+
+WASM configure (from the **parent** project, same Emscripten as your Qt 6.10 kit, typically 4.0.7):
+
+```bash
+source /path/to/emsdk_env.sh
+/path/to/Qt/6.10.x/wasm_singlethread/bin/qt-cmake -S . -B build-wasm
+cmake --build build-wasm
+```
+
+Do not drop a shared plugin into the browser — Qt WASM is statically linked. `add_subdirectory` + `cursorhand_link()` is the supported path.
+
+## QML API
 
 ```qml
 import QtQuick
@@ -34,7 +77,7 @@ Button {
 
 Image {
     source: "icon.png"
-    HandCursor {}                     // child handler, same default
+    HandCursor {}
 }
 
 Rectangle {
@@ -43,11 +86,11 @@ Rectangle {
 }
 ```
 
-Global busy / custom image cursor (C++ singleton, same type name):
+Global override (same type name, singleton):
 
 ```qml
 CursorHand.setOverride(Qt.WaitCursor)
-CursorHand.setPixmapOverride(Qt.resolvedUrl("cursor.png"), 8, 8)
+CursorHand.setPixmapOverride(Qt.resolvedUrl("cursor.png"), 8, 8)  // prefer qrc on WASM
 CursorHand.restoreOverride()
 ```
 
@@ -59,69 +102,14 @@ CursorHand.restoreOverride()
 | `shape` | `Qt.CursorShape` | `Qt.PointingHandCursor` |
 | `hovered` | bool (read-only) | `false` |
 
-## Prebuilt modules (GitHub Actions)
-
-Every successful build on `main` (and manual **Run workflow**) publishes zips to the **[Latest release](https://github.com/qcfsgqc/qml-cursor-hand/releases/latest)**. Pushing a version tag creates a named release instead.
-
-| Artifact | Runner |
-|---|---|
-| `cursor-hand-linux-x64.zip` | Ubuntu 24.04 |
-| `cursor-hand-linux-arm64.zip` | Ubuntu 24.04 ARM |
-| `cursor-hand-windows-x64.zip` | Windows 2022 (MSVC) |
-| `cursor-hand-macos-arm64.zip` | macOS 14 |
-| `cursor-hand-macos-x64.zip` | macOS 13 |
-
-Each zip contains `qml/Cursor/Hand/` (plugin + backing lib + `qmldir`). Point the engine at the `qml` folder:
-
-```cpp
-engine.addImportPath("/path/to/extract/qml");
-```
+## Standalone build
 
 ```bash
-# or
-export QML_IMPORT_PATH=/path/to/extract/qml
-```
-
-## Build from source
-
-Requires Qt 6.10 and CMake 3.16+.
-
-```bash
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/Qt/6.10.x/gcc_64
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/Qt/6.10.x/<kit>
 cmake --build build
-cmake --install build --prefix dist
 ```
 
-Example app target: `cursorhand-example` (`-DCURSORHAND_BUILD_EXAMPLE=ON`, default).
-
-### Use from another project
-
-```cmake
-add_subdirectory(qml-cursor-hand)
-
-qt_add_qml_module(myapp
-    URI MyApp
-    QML_FILES Main.qml
-    DEPENDENCIES Cursor.Hand
-)
-
-target_link_libraries(myapp PRIVATE Qt6::Quick cursorhand)
-```
-
-```qml
-import Cursor.Hand
-```
-
-If you consume the CI zip instead of linking the backing lib, install/copy `qml/Cursor/Hand` onto `QML_IMPORT_PATH` as above.
-
-## Layout
-
-```
-src/cursorhand.{h,cpp}   C++ attached + singleton
-src/HandCursor.qml       HoverHandler drop-in
-example/                 small demo window
-.github/workflows/       multi-platform module builds
-```
+Example target: `cursorhand-example` (`-DCURSORHAND_BUILD_EXAMPLE=ON`, default only when this repo is the top-level project).
 
 ## License
 
