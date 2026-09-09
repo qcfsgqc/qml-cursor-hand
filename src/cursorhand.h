@@ -64,6 +64,10 @@ public:
     Q_INVOKABLE static void setOverride(Qt::CursorShape shape);
     Q_INVOKABLE static void setPixmapOverride(const QUrl &url, int hotX = -1, int hotY = -1);
     Q_INVOKABLE static void restoreOverride();
+
+    // Watch a window so a RightButton-only fill MouseArea does not hide
+    // PointingHand / IBeam / drag cursors on items underneath.
+    Q_INVOKABLE static void ensureWatch(QObject *target);
 };
 
 #endif

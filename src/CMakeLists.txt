@@ -8,8 +8,11 @@ set(cursorhand_qml_args
         HandCursor.qml
 )
 
-# Qt for WebAssembly (and static Qt) cannot dlopen a QML plugin.
-if(EMSCRIPTEN OR (DEFINED QT6_IS_SHARED_LIBS_BUILD AND NOT QT6_IS_SHARED_LIBS_BUILD))
+# Qt for WebAssembly / static Qt cannot dlopen a QML plugin.
+# Embedded (not-toplevel) builds also STATIC so the host exe does not
+# need a sidecar Cursor/Hand plugin next to windeployqt output.
+option(CURSORHAND_FORCE_STATIC "Build Cursor.Hand as a static QML module" OFF)
+if(CURSORHAND_FORCE_STATIC OR EMSCRIPTEN OR (DEFINED QT6_IS_SHARED_LIBS_BUILD AND NOT QT6_IS_SHARED_LIBS_BUILD))
     list(APPEND cursorhand_qml_args STATIC)
 endif()
 

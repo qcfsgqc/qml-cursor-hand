@@ -1,7 +1,10 @@
 #include "cursorhand.h"
 
+#include <QEvent>
 #include <QGuiApplication>
+#include <QHoverEvent>
 #include <QMetaObject>
+#include <QMouseEvent>
 #include <QPixmap>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -9,6 +12,126 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QWindow>
+
+namespace {
+
+const char kFilterProp[] = "_cursorhand_watch";
+
+bool isPassThroughOverlay(const QQuickItem *item)
+{
+    if (!item || !item->inherits("QQuickMouseArea"))
+        return false;
+    const auto buttons = Qt::MouseButtons(item->property("acceptedButtons").toInt());
+    if (buttons & Qt::LeftButton)
+        return false;
+    if (item->property("hoverEnabled").toBool())
+        return false;
+    return true;
+}
+
+QQuickItem *pickThrough(QQuickItem *item, const QPointF &localPos)
+{
+    if (!item || !item->isVisible() || item->opacity() < 0.01)
+        return nullptr;
+
+    const QRectF bounds(0, 0, item->width(), item->height());
+    if (item->width() > 0 && item->height() > 0 && !bounds.contains(localPos))
+        return nullptr;
+
+    const QList<QQuickItem *> kids = item->childItems();
+    for (int i = kids.size() - 1; i >= 0; --i) {
+        QQuickItem *child = kids.at(i);
+        if (!child->isEnabled() && !isPassThroughOverlay(child))
+            continue;
+        if (QQuickItem *hit = pickThrough(child, child->mapFromItem(item, localPos)))
+            return hit;
+    }
+
+    if (isPassThroughOverlay(item))
+        return nullptr;
+    if (item->width() <= 0 || item->height() <= 0)
+        return nullptr;
+    return item;
+}
+
+bool resolveCursor(QQuickItem *hit, QCursor *out)
+{
+    for (QQuickItem *p = hit; p; p = p->parentItem()) {
+        if (isPassThroughOverlay(p))
+            continue;
+        if (p->inherits("QQuickTextInput") || p->inherits("QQuickTextEdit"))
+            return (*out = QCursor(Qt::IBeamCursor), true);
+        if (p->inherits("QQuickMouseArea")) {
+            const auto shape = Qt::CursorShape(p->property("cursorShape").toInt());
+            return (*out = QCursor(shape), true);
+        }
+        if (p->inherits("QQuickAbstractButton"))
+            return (*out = QCursor(Qt::PointingHandCursor), true);
+        if (p->inherits("QQuickHoverHandler")) {
+            const QVariant shape = p->property("cursorShape");
+            if (shape.isValid())
+                return (*out = QCursor(Qt::CursorShape(shape.toInt())), true);
+        }
+    }
+    return false;
+}
+
+class CursorHandWindowFilter : public QObject
+{
+public:
+    explicit CursorHandWindowFilter(QQuickWindow *window)
+        : QObject(window)
+        , m_window(window)
+    {
+    }
+
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched != m_window)
+            return false;
+        if (QGuiApplication::overrideCursor())
+            return false;
+
+        if (event->type() == QEvent::Leave) {
+            m_window->unsetCursor();
+            return false;
+        }
+        if (event->type() != QEvent::MouseMove && event->type() != QEvent::HoverMove)
+            return false;
+
+        QPointF pos;
+        if (event->type() == QEvent::MouseMove)
+            pos = static_cast<QMouseEvent *>(event)->position();
+        else
+            pos = static_cast<QHoverEvent *>(event)->position();
+
+        QQuickItem *content = m_window->contentItem();
+        if (!content)
+            return false;
+
+        QQuickItem *hit = pickThrough(content, content->mapFromScene(pos));
+        QCursor cursor;
+        if (resolveCursor(hit, &cursor))
+            m_window->setCursor(cursor);
+        else
+            m_window->unsetCursor();
+        return false;
+    }
+
+private:
+    QQuickWindow *m_window = nullptr;
+};
+
+void installWatch(QQuickWindow *window)
+{
+    if (!window || window->property(kFilterProp).toBool())
+        return;
+    auto *filter = new CursorHandWindowFilter(window);
+    window->installEventFilter(filter);
+    window->setProperty(kFilterProp, true);
+}
+
+} // namespace
 
 static QPixmap pixmapFromUrl(const QUrl &url)
 {
@@ -140,6 +263,7 @@ void CursorHandAttached::apply()
             m_handler->setProperty("enabled", m_enabled);
             m_handler->setProperty("cursorShape", int(m_shape));
         }
+        CursorHand::ensureWatch(item);
         return;
     }
 
@@ -148,6 +272,8 @@ void CursorHandAttached::apply()
             window->setCursor(QCursor(m_shape));
         else
             window->unsetCursor();
+        if (auto *quick = qobject_cast<QQuickWindow *>(window))
+            installWatch(quick);
     }
 }
 
@@ -184,4 +310,21 @@ void CursorHand::setPixmapOverride(const QUrl &url, int hotX, int hotY)
 void CursorHand::restoreOverride()
 {
     QGuiApplication::restoreOverrideCursor();
+}
+
+void CursorHand::ensureWatch(QObject *target)
+{
+    auto *item = qobject_cast<QQuickItem *>(target);
+    if (!item)
+        return;
+    if (auto *window = item->window())
+        installWatch(window);
+    static const char kItemWatched[] = "_cursorhand_item_watched";
+    if (item->property(kItemWatched).toBool())
+        return;
+    item->setProperty(kItemWatched, true);
+    QObject::connect(item, &QQuickItem::windowChanged, item, [](QQuickWindow *window) {
+        if (window)
+            installWatch(window);
+    });
 }

@@ -13,6 +13,8 @@ Works on desktop **and Qt for WebAssembly** (static link). URI: `Cursor.Hand`.
 
 Attached mode calls `QQuickItem::setCursor()` and installs a `HoverHandler` on the same item. `HoverHandler` does not grab the pointer, so `Button`, `MouseArea`, `TapHandler`, `Flickable`, etc. keep working.
 
+A `MouseArea` that fills a parent and only accepts the right button still sits on top for **cursor picking**. `CursorHand.ensureWatch()` (called automatically from attached mode and from `HandCursor`) watches the window and looks through that kind of overlay, so buttons, text fields, and drag `MouseArea` cursors underneath still show.
+
 On WASM, Qt maps `Qt::PointingHandCursor` to CSS `cursor: pointer` (and the other shapes to `grab` / `wait` / …).
 
 ## Use as a git submodule

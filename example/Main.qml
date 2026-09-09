@@ -6,7 +6,7 @@ import Cursor.Hand
 ApplicationWindow {
     id: root
     width: 560
-    height: 480
+    height: 560
     visible: true
     title: qsTr("Cursor.Hand")
 
@@ -69,6 +69,21 @@ ApplicationWindow {
                     color: "white"
                 }
                 HandCursor { cursorShape: Qt.PointingHandCursor }
+            }
+        }
+
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 48
+
+            Button {
+                anchors.fill: parent
+                text: qsTr("Button under RightButton overlay")
+                CursorHand.enabled: true
+            }
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.RightButton
             }
         }
 
