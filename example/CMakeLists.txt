@@ -1,3 +1,5 @@
+find_package(Qt6 6.10 REQUIRED COMPONENTS Quick QuickControls2)
+
 qt_add_executable(cursorhand-example
     main.cpp
 )

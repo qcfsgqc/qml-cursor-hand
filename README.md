@@ -59,16 +59,46 @@ CursorHand.restoreOverride()
 | `shape` | `Qt.CursorShape` | `Qt.PointingHandCursor` |
 | `hovered` | bool (read-only) | `false` |
 
-## Build
+## Prebuilt modules (GitHub Actions)
+
+Workflow [Build module](.github/workflows/build-module.yml) compiles a drop-in import for:
+
+| Artifact | Runner |
+|---|---|
+| `cursor-hand-linux-x64.zip` | Ubuntu 24.04 |
+| `cursor-hand-linux-arm64.zip` | Ubuntu 24.04 ARM |
+| `cursor-hand-windows-x64.zip` | Windows 2022 (MSVC) |
+| `cursor-hand-macos-arm64.zip` | macOS 14 |
+| `cursor-hand-macos-x64.zip` | macOS 13 |
+
+How to get a zip:
+
+1. Open **Actions → Build module** (or run **workflow_dispatch**).
+2. Open a green run → **Artifacts**.
+3. Or push a tag / GitHub Release — zips are attached automatically.
+
+Each zip contains `qml/Cursor/Hand/` (plugin + backing lib + `qmldir`). Point the engine at the `qml` folder:
+
+```cpp
+engine.addImportPath("/path/to/extract/qml");
+```
+
+```bash
+# or
+export QML_IMPORT_PATH=/path/to/extract/qml
+```
+
+## Build from source
 
 Requires Qt 6.10 and CMake 3.16+.
 
 ```bash
 cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/Qt/6.10.x/gcc_64
 cmake --build build
+cmake --install build --prefix dist
 ```
 
-Example app target: `cursorhand-example`.
+Example app target: `cursorhand-example` (`-DCURSORHAND_BUILD_EXAMPLE=ON`, default).
 
 ### Use from another project
 
@@ -88,7 +118,7 @@ target_link_libraries(myapp PRIVATE Qt6::Quick cursorhand)
 import Cursor.Hand
 ```
 
-If you consume it as a shared plugin instead of linking the backing lib, install/copy the generated `Cursor/Hand` import folder onto `QML_IMPORT_PATH`.
+If you consume the CI zip instead of linking the backing lib, install/copy `qml/Cursor/Hand` onto `QML_IMPORT_PATH` as above.
 
 ## Layout
 
@@ -96,6 +126,7 @@ If you consume it as a shared plugin instead of linking the backing lib, install
 src/cursorhand.{h,cpp}   C++ attached + singleton
 src/HandCursor.qml       HoverHandler drop-in
 example/                 small demo window
+.github/workflows/       multi-platform module builds
 ```
 
 ## License

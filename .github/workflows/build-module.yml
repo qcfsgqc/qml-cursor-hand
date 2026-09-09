@@ -1,0 +1,104 @@
+name: Build module
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: build-module-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux-x64
+          - os: ubuntu-24.04-arm
+            name: linux-arm64
+          - os: windows-2022
+            name: windows-x64
+          - os: macos-14
+            name: macos-arm64
+          - os: macos-13
+            name: macos-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6.10
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.*"
+          target: desktop
+          modules: qtshadertools
+          cache: true
+          install-deps: true
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCURSORHAND_BUILD_EXAMPLE=OFF
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/dist
+          -DCMAKE_PREFIX_PATH=${{ env.QT_ROOT_DIR }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Install
+        run: cmake --install build --config Release
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          {
+            echo "Cursor.Hand QML module (${{ matrix.name }}, Qt 6.10)"
+            echo
+            echo "Unzip, then add the qml directory to the import path:"
+            echo
+            echo '  engine.addImportPath("<extract>/qml");'
+            echo
+            echo "or set QML_IMPORT_PATH to <extract>/qml"
+            echo
+            echo "Then in QML:"
+            echo
+            echo "  import Cursor.Hand"
+            echo "  Button { CursorHand.enabled: true }"
+          } > dist/README.txt
+          (cd dist && cmake -E tar cf "../cursor-hand-${{ matrix.name }}.zip" --format=zip .)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cursor-hand-${{ matrix.name }}
+          path: cursor-hand-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach to GitHub Release
+    needs: build
+    if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          fail_on_unmatched_files: true
