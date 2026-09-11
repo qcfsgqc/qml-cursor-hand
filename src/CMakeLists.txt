@@ -16,6 +16,14 @@ if(CURSORHAND_FORCE_STATIC OR EMSCRIPTEN OR (DEFINED QT6_IS_SHARED_LIBS_BUILD AN
     list(APPEND cursorhand_qml_args STATIC)
 endif()
 
+# Toplevel shared plugin: put Cursor/Hand next to CMAKE_BINARY_DIR/qml so
+# PySide6 can addImportPath(<prefix>/qml) after cmake --install.
+if(CURSORHAND_IS_TOPLEVEL)
+    list(APPEND cursorhand_qml_args
+        OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml/Cursor/Hand"
+    )
+endif()
+
 qt_add_qml_module(cursorhand ${cursorhand_qml_args})
 
 target_link_libraries(cursorhand

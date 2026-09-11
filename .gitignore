@@ -5,3 +5,6 @@ CMakeUserPresets.json
 *.user
 *.autosave
 .DS_Store
+__pycache__/
+*.pyc
+*.pyo
