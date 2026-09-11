@@ -1,17 +1,23 @@
 #include "cursorhand.h"
 
+#include <QChildEvent>
+#include <QCoreApplication>
+#include <QCursor>
 #include <QEvent>
 #include <QGuiApplication>
 #include <QHoverEvent>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QPointer>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QWindow>
+
+#include <algorithm>
 
 namespace {
 
@@ -21,12 +27,51 @@ bool isPassThroughOverlay(const QQuickItem *item)
 {
     if (!item || !item->inherits("QQuickMouseArea"))
         return false;
-    const auto buttons = Qt::MouseButtons(item->property("acceptedButtons").toInt());
-    if (buttons & Qt::LeftButton)
-        return false;
+    // QQuickMouseArea.enabled is not QQuickItem::isEnabled(). A disabled
+    // MouseArea still reports Item::isEnabled() == true, stays in childItems(),
+    // and would otherwise lock the window cursor to Arrow (full-window click
+    // guards with enabled: false).
+    const QVariant enabled = item->property("enabled");
+    if (enabled.isValid() && !enabled.toBool())
+        return true;
     if (item->property("hoverEnabled").toBool())
         return false;
+    // Explicit OpenHand / CrossHair / IBeam still win. Default Arrow plus
+    // hoverEnabled: false is a click-eater or KDDW fill shell, not a cursor.
+    const auto shape = Qt::CursorShape(item->property("cursorShape").toInt());
+    if (shape != Qt::ArrowCursor)
+        return false;
     return true;
+}
+
+bool hoverHandlerCursor(const QQuickItem *item, QCursor *out)
+{
+    const QObjectList kids = item->children();
+    for (QObject *child : kids) {
+        if (!child->inherits("QQuickHoverHandler"))
+            continue;
+        const QVariant enabled = child->property("enabled");
+        if (enabled.isValid() && !enabled.toBool())
+            continue;
+        const QVariant shape = child->property("cursorShape");
+        if (!shape.isValid())
+            continue;
+        if (out)
+            *out = QCursor(Qt::CursorShape(shape.toInt()));
+        return true;
+    }
+    return false;
+}
+
+bool hasCursorSemantics(const QQuickItem *item)
+{
+    if (item->inherits("QQuickTextInput") || item->inherits("QQuickTextEdit"))
+        return true;
+    if (item->inherits("QQuickAbstractButton"))
+        return true;
+    if (item->inherits("QQuickMouseArea") && !isPassThroughOverlay(item))
+        return true;
+    return hoverHandlerCursor(item, nullptr);
 }
 
 QQuickItem *pickThrough(QQuickItem *item, const QPointF &localPos)
@@ -38,7 +83,10 @@ QQuickItem *pickThrough(QQuickItem *item, const QPointF &localPos)
     if (item->width() > 0 && item->height() > 0 && !bounds.contains(localPos))
         return nullptr;
 
-    const QList<QQuickItem *> kids = item->childItems();
+    QList<QQuickItem *> kids = item->childItems();
+    std::stable_sort(kids.begin(), kids.end(), [](const QQuickItem *a, const QQuickItem *b) {
+        return a->z() < b->z();
+    });
     for (int i = kids.size() - 1; i >= 0; --i) {
         QQuickItem *child = kids.at(i);
         if (!child->isEnabled() && !isPassThroughOverlay(child))
@@ -51,7 +99,30 @@ QQuickItem *pickThrough(QQuickItem *item, const QPointF &localPos)
         return nullptr;
     if (item->width() <= 0 || item->height() <= 0)
         return nullptr;
+    // Layout / toast fillers have size but no cursor of their own. Returning
+    // them would stop the sibling walk and unsetCursor(), after which Qt's
+    // item-cursor pick can still land on a higher-z MouseArea's Arrow.
+    if (!hasCursorSemantics(item))
+        return nullptr;
     return item;
+}
+
+// Default MouseArea calls setCursor(Arrow) in its ctor, so hasCursor is
+// true even when hoverEnabled is false. findCursorItemAndHandler then
+// stops on a later-declared fill overlay and never sees HoverHandler.
+// Clearing that flag lets Qt's own picker look through. Walk the whole
+// tree: HandCursor.onCompleted (and thus ensureWatch) often runs before
+// a sibling fill MouseArea is created, so a point-limited strip at
+// install time would miss it.
+void stripPassThroughCursors(QQuickItem *item)
+{
+    if (!item)
+        return;
+    const QList<QQuickItem *> kids = item->childItems();
+    for (QQuickItem *child : kids)
+        stripPassThroughCursors(child);
+    if (isPassThroughOverlay(item))
+        item->unsetCursor();
 }
 
 bool resolveCursor(QQuickItem *hit, QCursor *out)
@@ -67,11 +138,10 @@ bool resolveCursor(QQuickItem *hit, QCursor *out)
         }
         if (p->inherits("QQuickAbstractButton"))
             return (*out = QCursor(Qt::PointingHandCursor), true);
-        if (p->inherits("QQuickHoverHandler")) {
-            const QVariant shape = p->property("cursorShape");
-            if (shape.isValid())
-                return (*out = QCursor(Qt::CursorShape(shape.toInt())), true);
-        }
+        // HoverHandler is a QObject child, not a QQuickItem, so walking
+        // parentItem() never sees it.
+        if (hoverHandlerCursor(p, out))
+            return true;
     }
     return false;
 }
@@ -83,52 +153,120 @@ public:
         : QObject(window)
         , m_window(window)
     {
+        window->installEventFilter(this);
+        if (QQuickItem *content = window->contentItem())
+            watchItem(content);
+        // QQuickMouseArea::setCursor(Arrow) runs in the ctor *after*
+        // ChildAdded. postEvent does not need Q_OBJECT (unlike
+        // invokeMethod / QTimer::singleShot on this).
+        scheduleApply();
+    }
+
+    bool event(QEvent *event) override
+    {
+        if (event->type() == QEvent::User) {
+            m_pending = false;
+            applyCursor();
+            return true;
+        }
+        return QObject::event(event);
     }
 
     bool eventFilter(QObject *watched, QEvent *event) override
     {
+        if (event->type() == QEvent::ChildAdded) {
+            if (auto *item = qobject_cast<QQuickItem *>(
+                    static_cast<QChildEvent *>(event)->child())) {
+                watchItem(item);
+                scheduleApply();
+            }
+            return false;
+        }
+
         if (watched != m_window)
             return false;
         if (QGuiApplication::overrideCursor())
             return false;
 
         if (event->type() == QEvent::Leave) {
-            m_window->unsetCursor();
+            m_left = true;
+            scheduleApply();
             return false;
         }
         if (event->type() != QEvent::MouseMove && event->type() != QEvent::HoverMove)
             return false;
 
-        QPointF pos;
+        m_left = false;
+        m_havePos = true;
         if (event->type() == QEvent::MouseMove)
-            pos = static_cast<QMouseEvent *>(event)->position();
+            m_pos = static_cast<QMouseEvent *>(event)->position();
         else
-            pos = static_cast<QHoverEvent *>(event)->position();
+            m_pos = static_cast<QHoverEvent *>(event)->position();
+        if (QQuickItem *content = m_window->contentItem())
+            stripPassThroughCursors(content);
+        scheduleApply();
+        return false;
+    }
 
+private:
+    void watchItem(QQuickItem *item)
+    {
+        if (!item || item->property("_cursorhand_childwatch").toBool())
+            return;
+        item->setProperty("_cursorhand_childwatch", true);
+        item->installEventFilter(this);
+        const QList<QQuickItem *> kids = item->childItems();
+        for (QQuickItem *child : kids)
+            watchItem(child);
+    }
+
+    void scheduleApply()
+    {
+        if (m_pending || !m_window)
+            return;
+        m_pending = true;
+        QCoreApplication::postEvent(this, new QEvent(QEvent::User));
+    }
+
+    void applyCursor()
+    {
+        if (!m_window || QGuiApplication::overrideCursor())
+            return;
         QQuickItem *content = m_window->contentItem();
+        if (content)
+            stripPassThroughCursors(content);
+        // Construction / ChildAdded only strip overlay Arrow. Do not
+        // unsetCursor() with a dummy (0,0) pick — that clobbers a correct
+        // HoverHandler hand Qt already applied.
+        if (!m_havePos)
+            return;
+        if (m_left) {
+            m_window->unsetCursor();
+            return;
+        }
         if (!content)
-            return false;
-
-        QQuickItem *hit = pickThrough(content, content->mapFromScene(pos));
+            return;
+        QQuickItem *hit = pickThrough(content, content->mapFromScene(m_pos));
         QCursor cursor;
         if (resolveCursor(hit, &cursor))
             m_window->setCursor(cursor);
         else
             m_window->unsetCursor();
-        return false;
     }
 
-private:
-    QQuickWindow *m_window = nullptr;
+    QPointer<QQuickWindow> m_window;
+    QPointF m_pos;
+    bool m_pending = false;
+    bool m_left = false;
+    bool m_havePos = false;
 };
 
 void installWatch(QQuickWindow *window)
 {
     if (!window || window->property(kFilterProp).toBool())
         return;
-    auto *filter = new CursorHandWindowFilter(window);
-    window->installEventFilter(filter);
     window->setProperty(kFilterProp, true);
+    new CursorHandWindowFilter(window);
 }
 
 } // namespace

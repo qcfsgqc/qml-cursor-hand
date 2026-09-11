@@ -13,7 +13,7 @@ Works on desktop **and Qt for WebAssembly** (static link). URI: `Cursor.Hand`.
 
 Attached mode calls `QQuickItem::setCursor()` and installs a `HoverHandler` on the same item. `HoverHandler` does not grab the pointer, so `Button`, `MouseArea`, `TapHandler`, `Flickable`, etc. keep working.
 
-A `MouseArea` that fills a parent and only accepts the right button still sits on top for **cursor picking**. `CursorHand.ensureWatch()` (called automatically from attached mode and from `HandCursor`) watches the window and looks through that kind of overlay, so buttons, text fields, and drag `MouseArea` cursors underneath still show.
+A `MouseArea` that fills a parent and only accepts the right button still sits on top for **cursor picking**. So does a `MouseArea` with `enabled: false`: Qt keeps `Item.enabled` true, so a full-window click guard would otherwise lock the window cursor to Arrow. `QQuickMouseArea` also calls `setCursor(Arrow)` in its constructor, so `hasCursor` is true even when `hoverEnabled` is false; `QQuickWindow::updateCursor()` then stops on that overlay and never sees a `HoverHandler` underneath. Empty filler `Item`s (toasts, layout shells) are skipped the same way — returning them would `unsetCursor()` the window and let Qt's own pick land on a higher-z Arrow `MouseArea`. `CursorHand.ensureWatch()` (called automatically from attached mode and from `HandCursor`) watches the window, clears those pass-through overlays' item cursors, and looks through them, so buttons, text fields, and drag `MouseArea` cursors underneath still show. `HoverHandler` is a `QObject` child, not a `QQuickItem`; the watch reads it off the item's `children()`.
 
 On WASM, Qt maps `Qt::PointingHandCursor` to CSS `cursor: pointer` (and the other shapes to `grab` / `wait` / …).
 
@@ -112,6 +112,28 @@ cmake --build build
 ```
 
 Example target: `cursorhand-example` (`-DCURSORHAND_BUILD_EXAMPLE=ON`, default only when this repo is the top-level project).
+
+Install the shared module (qmldir + plugin) to `<prefix>/qml/Cursor/Hand`:
+
+```bash
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/Qt/6.10.x/<kit> -DCMAKE_INSTALL_PREFIX=/path/to/prefix -DCURSORHAND_BUILD_EXAMPLE=OFF
+cmake --build build --config Release
+cmake --install build --config Release
+```
+
+## PySide6
+
+Do not static-link into the Python process. Build the **shared** plugin (above), then before `engine.load`:
+
+```python
+from cursorhand_pyside import register
+
+register(engine, "/path/to/prefix/qml")  # directory that contains Cursor/Hand
+```
+
+`register` calls `QQmlEngine.addImportPath`. On Windows it also puts the PySide6 Qt DLLs on the search path and preloads `cursorhand.dll`. QML is unchanged: `import Cursor.Hand`.
+
+The calculator / C++ host still uses `add_subdirectory` + `CURSORHAND_FORCE_STATIC` + `cursorhand_link()`; that path does not load this plugin.
 
 ## License
 
